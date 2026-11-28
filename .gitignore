@@ -1,0 +1,7 @@
+/kernel/
+/rom/
+/out/
+/dist/
+/anykernel3/
+__pycache__/
+*.pyc

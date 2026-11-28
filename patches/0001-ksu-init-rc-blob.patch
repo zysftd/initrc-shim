@@ -1,0 +1,92 @@
+--- a/kernel/runtime/ksud_integration.c
++++ b/kernel/runtime/ksud_integration.c
+@@ -403,6 +403,49 @@
+ static ssize_t ksu_rc_pos = 0;
+ const size_t ksu_rc_len = sizeof(KERNEL_SU_RC) - 1;
+ 
++/*
++ * Android 17's init sizes its buffer from fstat() and reads init.rc with a
++ * single read_iter(), so there is neither an EOF read nor spare room in the
++ * destination buffer to append into. Instead of appending, replace the whole
++ * file content with a same-length variant generated from this ROM's init.rc
++ * (comment lines swapped for the ksud exec lines). See ksu_rc_blob.h.
++ */
++static bool ksu_rc_blob_active;
++
++#include "ksu_rc_blob.h"
++
++static ssize_t ksu_rc_blob_read_iter(struct kiocb *iocb, struct iov_iter *to)
++{
++	size_t left, n;
++
++	if (iocb->ki_pos < 0 || (size_t)iocb->ki_pos >= ksu_rc_blob_len)
++		return 0;
++
++	left = ksu_rc_blob_len - (size_t)iocb->ki_pos;
++	n = min_t(size_t, iov_iter_count(to), left);
++	if (copy_to_iter(ksu_rc_blob + iocb->ki_pos, n, to) != n)
++		return -EFAULT;
++
++	iocb->ki_pos += n;
++	return n;
++}
++
++static ssize_t ksu_rc_blob_read(char __user *buf, size_t count, loff_t *pos)
++{
++	size_t left, n;
++
++	if (!pos || *pos < 0 || (size_t)*pos >= ksu_rc_blob_len)
++		return 0;
++
++	left = ksu_rc_blob_len - (size_t)*pos;
++	n = min(count, left);
++	if (copy_to_user(buf, ksu_rc_blob + *pos, n))
++		return -EFAULT;
++
++	*pos += n;
++	return n;
++}
++
+ // https://cs.android.com/android/platform/superproject/main/+/main:system/core/init/parser.cpp;l=144;drc=61197364367c9e404c7da6900658f1b16c42d0da
+ // https://cs.android.com/android/platform/superproject/main/+/main:system/libbase/file.cpp;l=241-243;drc=61197364367c9e404c7da6900658f1b16c42d0da
+ // The system will read init.rc file until EOF, whenever read() returns 0,
+@@ -417,6 +460,9 @@
+ 	// this runs in normal (non-atomic) read context, safe to open files
+ 	load_module_rc_once();
+ #endif
++	if (ksu_rc_blob_active)
++		return ksu_rc_blob_read(buf, count, pos);
++
+ 	if (ksu_rc_pos && ksu_rc_pos < ksu_rc_len)
+ 		goto append_ksu_rc;
+ 	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len)
+@@ -479,6 +525,9 @@
+ 	// this runs in normal (non-atomic) read context, safe to open files
+ 	load_module_rc_once();
+ #endif
++	if (ksu_rc_blob_active)
++		return ksu_rc_blob_read_iter(iocb, to);
++
+ 	if (ksu_rc_pos && ksu_rc_pos < ksu_rc_len)
+ 		goto append_ksu_rc;
+ 	if (ksu_rc_pos >= ksu_rc_len && module_rc_pos < (ssize_t)module_rc_len)
+@@ -606,8 +655,17 @@
+     load_module_rc_once();
+ #endif
+ 
+-    pr_info("read init.rc, comm: %s, rc_count: %zu, module_rc: %zu\n", current->comm,
+-            ksu_rc_len, module_rc_len);
++    pr_info("init.rc read hook: comm=%s read=%d read_iter=%d\n",
++            current->comm, file->f_op->read != NULL,
++            file->f_op->read_iter != NULL);
++
++    /*
++     * Serve our pre-built, same-length variant of init.rc. The file is read
++     * once with a buffer sized from fstat(), so appending is impossible; a
++     * full replacement keeps the size identical and still delivers the ksud
++     * exec lines to the parser.
++     */
++    ksu_rc_blob_active = true;
+ 
+     // Now we need to proxy the read and modify the result!
+     // But, we can not modify the file_operations directly, because it's in read-only memory.

@@ -1,0 +1,118 @@
+diff --git a/drivers/power/supply/qcom/schgm-flash.c b/drivers/power/supply/qcom/schgm-flash.c
+index 11cf6a0f2..551de2249 100644
+--- a/drivers/power/supply/qcom/schgm-flash.c
++++ b/drivers/power/supply/qcom/schgm-flash.c
+@@ -15,9 +15,9 @@
+ #include <linux/of_irq.h>
+ #include <linux/printk.h>
+ #include <linux/pmic-voter.h>
+-#ifndef OPLUS_FEATURE_CHG_BASIC
++/* local build: smb5-lib.h is needed for struct smb_irq_data 
++ * even when OPLUS_FEATURE_CHG_BASIC is force-defined. */
+ #include "smb5-lib.h"
+-#endif
+ #include "schgm-flash.h"
+ 
+ #define IS_BETWEEN(left, right, value) \
+diff --git a/include/linux/susfs.h b/include/linux/susfs.h
+index 7e461e63c..92377fe7c 100644
+--- a/include/linux/susfs.h
++++ b/include/linux/susfs.h
+@@ -8,6 +8,10 @@
+ #include <linux/path.h>
+ #include <linux/susfs_def.h>
+ #include <linux/statfs.h>
++#include <linux/workqueue.h>
++
++/* deferred susfs works, scheduled from KernelSU's umount handler */
++extern struct work_struct susfs_extra_works;
+ 
+ #define SUSFS_VERSION "v2.2.0"
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
+diff --git a/scripts/Makefile b/scripts/Makefile
+index 51403cac7..60e82cb58 100644
+--- a/scripts/Makefile
++++ b/scripts/Makefile
+@@ -22,6 +22,8 @@ hostprogs-$(CONFIG_BUILDTIME_EXTABLE_SORT) += sortextable
+ hostprogs-$(CONFIG_ASN1)	 += asn1_compiler
+ hostprogs-$(CONFIG_MODULE_SIG)	 += sign-file
+ hostprogs-$(CONFIG_SYSTEM_TRUSTED_KEYRING) += extract-cert
++# Arch's OpenSSL 3.x drops the deprecated ENGINE_* symbols; link our own stubs.
++extract-cert-objs := extract-cert.o engine_compat.o
+ hostprogs-$(CONFIG_SYSTEM_EXTRA_CERTIFICATE) += insert-sys-cert
+ 
+ HOSTCFLAGS_sortextable.o = -I$(srctree)/tools/include
+diff --git a/scripts/engine_compat.c b/scripts/engine_compat.c
+new file mode 100644
+index 000000000..3518e74bf
+--- /dev/null
++++ b/scripts/engine_compat.c
+@@ -0,0 +1,48 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Minimal ENGINE stubs for building extract-cert against OpenSSL 3.x
++ * installations that are built without the (deprecated) ENGINE API.
++ *
++ * We never use PKCS#11 keys for this build (CONFIG_SYSTEM_TRUSTED_KEYS
++ * is empty), so returning failure from the "load" helpers is safe and
++ * keeps the linker happy.  Do not use this for real PKCS#11 key loading.
++ */
++#include <openssl/engine.h>
++
++void ENGINE_load_builtin_engines(void)
++{
++}
++
++ENGINE *ENGINE_by_id(const char *id)
++{
++	(void)id;
++	return NULL;
++}
++
++int ENGINE_init(ENGINE *e)
++{
++	(void)e;
++	return 0;
++}
++
++int ENGINE_ctrl_cmd_string(ENGINE *e, const char *cmd, const char *arg,
++			   int optional)
++{
++	(void)e;
++	(void)cmd;
++	(void)arg;
++	(void)optional;
++	return 0;
++}
++
++int ENGINE_ctrl_cmd(ENGINE *e, const char *cmd, long i, void *p,
++		    void (*f)(void), int cmd_optional)
++{
++	(void)e;
++	(void)cmd;
++	(void)i;
++	(void)p;
++	(void)f;
++	(void)cmd_optional;
++	return 0;
++}
+diff --git a/security/selinux/hooks.c b/security/selinux/hooks.c
+index a5dbc1960..be009a22e 100644
+--- a/security/selinux/hooks.c
++++ b/security/selinux/hooks.c
+@@ -7356,3 +7356,15 @@ int selinux_disable(struct selinux_state *state)
+ 	return 0;
+ }
+ #endif
++
++#ifdef CONFIG_KSU
++/*
++ * KSU-Next 3.4.2 no longer exports a hidden SELinux state, but the OPlus
++ * tree calls this hook from hooks.c/selinuxfs.c. NULL means "use the real
++ * state", which keeps SELinux functional; only KSU's state spoofing is off.
++ */
++struct selinux_state *ksu_selinux_hide_state_for_current(void)
++{
++	return NULL;
++}
++#endif
