@@ -3440,10 +3440,10 @@ index 000000000000..e54489557409
 +#endif
 diff --git a/KernelSU-Next/kernel/feature/selinux_hide.c b/KernelSU-Next/kernel/feature/selinux_hide.c
 new file mode 100644
-index 000000000000..a9f1afc475a9
+index 000000000000..7054846ca047
 --- /dev/null
 +++ b/KernelSU-Next/kernel/feature/selinux_hide.c
-@@ -0,0 +1,604 @@
+@@ -0,0 +1,616 @@
 +#include <linux/fs.h>
 +#include <linux/mutex.h>
 +#include <linux/slab.h>
@@ -3821,13 +3821,16 @@ index 000000000000..a9f1afc475a9
 +
 +static void ksu_hook_proc_attr_write(void)
 +{
-+#if defined(CONFIG_KSU_MANUAL_HOOK) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 +    /*
-+     * Preserve legitimate Android 17 app context transactions on
-+     * legacy kernels using manual hooks.
++     * kebab/4.19: upstream skips these hooks on manual-hook kernels below
++     * 5.10 to keep Android 17 app context transactions working. The hook
++     * only rejects writes that name a hidden type (KSU, Magisk, LSPosed,
++     * Xposed); everything else is passed through to the original handler,
++     * so legitimate transactions are unaffected either way. Keeping the
++     * skip leaves /proc/self/attr/current and /sys/fs/selinux/context
++     * answering normally, and those are exactly the two nodes a scanner
++     * uses to confirm u:r:ksu:s0 and u:object_r:ksu_file:s0 exist.
 +     */
-+    return;
-+#endif
 +
 +    struct file_operations *fops;
 +    int ret;
@@ -3848,13 +3851,16 @@ index 000000000000..a9f1afc475a9
 +
 +static void ksu_hook_transaction_write(void)
 +{
-+#if defined(CONFIG_KSU_MANUAL_HOOK) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 +    /*
-+     * Preserve legitimate Android 17 app context transactions on
-+     * legacy kernels using manual hooks.
++     * kebab/4.19: upstream skips these hooks on manual-hook kernels below
++     * 5.10 to keep Android 17 app context transactions working. The hook
++     * only rejects writes that name a hidden type (KSU, Magisk, LSPosed,
++     * Xposed); everything else is passed through to the original handler,
++     * so legitimate transactions are unaffected either way. Keeping the
++     * skip leaves /proc/self/attr/current and /sys/fs/selinux/context
++     * answering normally, and those are exactly the two nodes a scanner
++     * uses to confirm u:r:ksu:s0 and u:object_r:ksu_file:s0 exist.
 +     */
-+    return;
-+#endif
 +
 +    struct file_operations *fops;
 +    int ret;
@@ -3986,6 +3992,12 @@ index 000000000000..a9f1afc475a9
 +    ksu_selinux_hide_add_type("droidspaces");
 +    ksu_selinux_hide_add_type("lsposed_file");
 +    ksu_selinux_hide_add_type("xposed_data");
++    /*
++     * kebab/4.19: upstream lists xposed_data but not xposed_file, so a
++     * probe writing u:object_r:xposed_file:s0 to attr/current still sees
++     * it recognized (its sibling contexts all report EINVAL). Add it.
++     */
++    ksu_selinux_hide_add_type("xposed_file");
 +    ksu_selinux_hide_add_type("msd_app");
 +    ksu_selinux_hide_add_type("msd_daemon");
 +
